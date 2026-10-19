@@ -35,3 +35,6 @@ cmd/**/main
 
 # Pasta de testes rápidos locais (não versionar)
 tests/
+
+# Pasta contendo tutorial do Fiber para aprendizado
+fiber-tutorial/
