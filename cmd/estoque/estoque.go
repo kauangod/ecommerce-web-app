@@ -6,6 +6,7 @@ import (
 	"os"
 	"encoding/json"
 
+	fiber "github.com/gofiber/fiber/v3"
 	u "github.com/bdsromulo/Trab2-SistDistribuidos/internal/utils"
 )
 
@@ -44,6 +45,12 @@ func imprimirEstoque(est Estoque) {
 	for _, id := range ids {
 		log.Printf("  Produto %s: %d unidades", id, est.Produtos[id].Availability)
 	}
+}
+
+func ordenaLista(l []fiber.Map){
+	sort.Slice(l, func(i, j int) bool {
+        return l[i]["id"].(string) < l[j]["id"].(string)
+    })
 }
 
 /*func main() {

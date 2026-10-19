@@ -6,16 +6,19 @@ import (
 	"encoding/json"
 	"log"
 	"time"
+	"sync"
 
 	e "github.com/bdsromulo/Trab2-SistDistribuidos/internal/events"
 	s "github.com/bdsromulo/Trab2-SistDistribuidos/internal/signature"
 	u "github.com/bdsromulo/Trab2-SistDistribuidos/internal/utils"
 	uuid "github.com/google/uuid"
 	amqp "github.com/rabbitmq/amqp091-go"
+	fiber "github.com/gofiber/fiber/v3"
 )
 
 func main() {
 	est := loadEstoque()
+	mu := sync.RWMutex{}
 
 	conn, err := amqp.Dial("amqp://ecommerce:ecommerce@localhost:5672/")
 	u.FailOnError(err, "Erro ao conectar ao RabbitMQ")
@@ -97,6 +100,7 @@ func main() {
 				err = env.Decodificar(&data)
 				u.FailOnError(err, "Erro ao decodificar os dados do pedido no envelope")
 				var itensReservados []e.Item
+				mu.Lock()
 				for _, i := range data.Itens {
 					if est.Produtos[i.ProdutoID].Availability >= i.Quantidade {
 						est.Produtos[i.ProdutoID].Availability -= i.Quantidade
@@ -108,6 +112,7 @@ func main() {
 						break
 					}
 				}
+				mu.Unlock()
 				if estoque_ok {
 					p_ok := e.PedidoEstoqueOKDados{
 						PedidoID:   data.PedidoID,
@@ -184,16 +189,40 @@ func main() {
 				var data e.PedidoExcluidoDados
 				err = env.Decodificar(&data)
 				u.FailOnError(err, "Erro ao decodificar os dados do pedido excluído no envelope")
+				mu.Lock()
 				for _, i := range reservas[data.PedidoID] {
 					est.Produtos[i.ProdutoID].Availability += i.Quantidade
 					log.Printf("Devolvendo %d unidades do produto %s (pedido %s cancelado)", i.Quantidade, i.ProdutoID, data.PedidoID)
 				}
 				delete(reservas, data.PedidoID)
+				mu.Unlock()
 			}
 			imprimirEstoque(est)
 			//log.Printf("Recebido evento: %s", d.Body)
 			d.Ack(false)
 		}
+	}()
+
+	go func(){
+		app := fiber.New();
+		prod := est.Produtos
+		app.Get("/list/storage", func(c fiber.Ctx) error {
+			mu.RLock()
+
+			available_items := []fiber.Map{}
+
+			for _, p := range prod {
+				available_items = append(available_items, fiber.Map{
+					"id": p.ID,
+					"availability": p.Availability,
+				})
+			}
+			mu.RUnlock()
+			ordenaLista(available_items)
+			return c.JSON(available_items)
+		})
+
+		log.Fatal(app.Listen(":3000"))
 	}()
 
 	log.Printf(" [*] Aguardando eventos de pedidos...")
