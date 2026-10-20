@@ -14,6 +14,7 @@ import (
 	"os"
 	"sync"
 	"time"
+	"strings"
 
 	"github.com/bdsromulo/Trab2-SistDistribuidos/internal/catalogo"
 	e "github.com/bdsromulo/Trab2-SistDistribuidos/internal/events"
@@ -137,9 +138,39 @@ func main() {
 			return c.JSON(l)
 		})
 
+		app.Post("/pedidos", func(c fiber.Ctx) error {
+			req := struct{
+				Itens []struct{
+					ProdutoID string `json:"produto_id"`
+					Quantidade int `json:"quantidade"`
+				} `json:"itens"`
+			}{}
+			err := c.Bind().Body(&req)
+			u.FailOnError(err, "Erro")
+
+			items := []e.Item{}
+			for _, i := range req.Itens{
+				prod, ok := buscarProdutoCatalogo(produtos, i.ProdutoID)
+				if !ok || i.Quantidade <= 0{
+					return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"erro": "body inválido ou sem itens"})
+				}
+				items = append(items, e.Item{
+						ProdutoID: i.ProdutoID,
+						Nome: prod.Nome,
+						Quantidade: i.Quantidade,
+						PrecoUnitario: prod.Preco,
+				})
+			}
+			pedido, err := servico.CriarPedido(items)
+			u.FailOnError(err, "Erro ao criar o pedido")
+
+			return c.Status(fiber.StatusCreated).JSON(pedido)
+		})
+
 		log.Fatal(app.Listen(":3001"))
 	}()
 	NovoMenu(servico, pedidos, produtos, os.Stdin, os.Stdout).Executar()
+
 	fmt.Println("Até mais!")
 }
 
@@ -161,6 +192,14 @@ func listarEstoque()[]ProdutoEstoque{
 	return l
 }
 
+func buscarProdutoCatalogo(produtos []catalogo.Produto, id string) (catalogo.Produto, bool) {
+	for _, p := range produtos {
+		if strings.EqualFold(p.ID, id) {
+			return p, true
+		}
+	}
+	return catalogo.Produto{}, false
+}
 
 // publicarEvento monta o envelope, assina o data com a chave do Principal e
 // publica na exchange eCommerce, do mesmo jeito que o Estoque e o Pagamento.
