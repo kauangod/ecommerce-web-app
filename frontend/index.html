@@ -19,10 +19,6 @@
     </nav>
 
     <div class="topbar-actions">
-      <div id="connection-status" class="connection-status" data-state="connecting" role="status">
-        <span class="connection-dot" aria-hidden="true"></span>
-        <span class="connection-label">Conectando</span>
-      </div>
       <button id="open-cart" class="cart-button" type="button" aria-controls="cart-drawer" aria-expanded="false">
         <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 3h2l2.2 10.2a2 2 0 0 0 2 1.6h7.7a2 2 0 0 0 2-1.6L20.3 7H6.1M10 20a1 1 0 1 1-2 0 1 1 0 0 1 2 0Zm9 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"/></svg>
         <span>Carrinho</span>
@@ -114,6 +110,10 @@
     </div>
     <div id="cart-items" class="cart-items"></div>
     <div class="drawer-footer">
+      <label class="checkout-email-field" for="checkout-email">
+        <span>E-mail do cliente</span>
+        <input id="checkout-email" type="email" placeholder="voce@exemplo.com" required autocomplete="email">
+      </label>
       <div class="cart-total"><span>Total</span><strong id="cart-total">R$ 0,00</strong></div>
       <button id="checkout-button" class="primary-button checkout-button" type="button" disabled>
         Finalizar pedido <span aria-hidden="true">→</span>
@@ -126,7 +126,6 @@
 
   <template id="product-template">
     <article class="product-card">
-      <div class="product-art"><span class="product-category"></span><span class="product-glyph" aria-hidden="true"></span></div>
       <div class="product-info">
         <div><span class="product-code"></span><span class="stock-label"></span></div>
         <h3 class="product-name"></h3>

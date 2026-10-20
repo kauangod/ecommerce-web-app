@@ -14,10 +14,10 @@ um JSON como `{ "erro": "mensagem para o usuário" }`.
 
 ### Catálogo
 
-`GET /api/produtos`
+`GET /produtos`
 
-Resposta: um array ou `{ "produtos": [...] }`. Cada produto segue o catálogo
-atual e pode acrescentar a quantidade do MS Estoque:
+Resposta: um array com todos os produtos do catálogo e a quantidade do MS
+Estoque:
 
 ```json
 {
@@ -25,48 +25,51 @@ atual e pode acrescentar a quantidade do MS Estoque:
   "nome": "Fone de ouvido Bluetooth",
   "categoria": "A",
   "preco": 199.90,
-  "quantidade": 8,
-  "disponivel": true
+  "availability": 8
 }
 ```
 
 ### Pedidos
 
-`POST /api/pedidos`
+`POST /pedidos`
 
 ```json
 {
+  "email": "cliente@exemplo.com",
   "itens": [
     { "produto_id": "P01", "quantidade": 2 }
   ]
 }
 ```
 
-Resposta `201 Created`: o pedido abaixo. `checkout_url` é opcional na criação;
+Resposta `201 Created`: o pedido abaixo. `CheckoutURL` é opcional na criação;
 se a cobrança só existir depois de `pedido.estoque_ok`, a URL deve chegar em uma
 notificação SSE posterior.
 
-`GET /api/pedidos` retorna um array ou `{ "pedidos": [...] }`.
+`GET /pedidos?email=cliente%40exemplo.com` retorna os pedidos do cliente. Sem
+o parâmetro, mantém a listagem completa para compatibilidade e demonstração.
 
-`DELETE /api/pedidos/{id}` cancela o pedido e pode responder `204 No Content`.
+`DELETE /pedidos/{id}` cancela o pedido e responde `202 Accepted`.
 
 ```json
 {
-  "id": "a1b2c3d4",
-  "itens": [
+  "ID": "a1b2c3d4",
+  "Email": "cliente@exemplo.com",
+  "Itens": [
     {
-      "produto_id": "P01",
-      "nome": "Fone de ouvido Bluetooth",
-      "quantidade": 2,
-      "preco_unitario": 199.90
+      "ProdutoID": "P01",
+      "Nome": "Fone de ouvido Bluetooth",
+      "Quantidade": 2,
+      "PrecoUnitario": 199.90
     }
   ],
-  "valor_total": 399.80,
-  "status": "aguardando confirmação",
-  "motivo": "",
-  "detalhe": "",
-  "criado_em": "2026-10-19T20:30:00Z",
-  "checkout_url": "https://mock-pagamento.test/checkout/abc"
+  "ValorTotal": 399.80,
+  "Status": "aguardando confirmação",
+  "Motivo": "",
+  "Detalhe": "",
+  "CobrancaID": "abc",
+  "CheckoutURL": "http://localhost:8083/checkout/abc",
+  "CriadoEm": "2026-10-19T20:30:00Z"
 }
 ```
 
@@ -81,23 +84,24 @@ Os estados exibidos seguem os existentes em `cmd/principal/pedidos.go`:
 
 ### Interesses em promoções
 
-`POST /api/interesses-promocao`
+`PUT /interesses/{categoria}` recebe uma categoria por chamada:
 
 ```json
 {
-  "email": "cliente@exemplo.com",
-  "categorias": ["A", "C"]
+  "email": "cliente@exemplo.com"
 }
 ```
 
-`DELETE /api/interesses-promocao` recebe o mesmo formato. Se `categorias` for
-um array vazio, deve cancelar todos os interesses do e-mail.
+`DELETE /interesses/{categoria}?email=cliente%40exemplo.com` cancela sem body.
+Para várias categorias, o frontend faz uma chamada separada para cada uma.
 
 ### Atualizações SSE
 
-`GET /api/eventos` deve responder com `Content-Type: text/event-stream`, manter a
-conexão aberta e enviar uma linha `id:` para permitir reconexão com
-`Last-Event-ID`. O frontend aceita eventos nomeados ou mensagens genéricas.
+`GET /eventos?email=cliente%40exemplo.com` responde com
+`Content-Type: text/event-stream`, mantém a
+conexão aberta e envia uma linha `id:` para permitir reconexão com
+`Last-Event-ID`. O Gateway envia apenas eventos dos pedidos associados ao
+e-mail informado. O frontend aceita eventos nomeados ou mensagens genéricas.
 
 Exemplo nomeado:
 
@@ -112,6 +116,7 @@ Tipos já reconhecidos:
 
 - `pedido.estoque_ok`;
 - `estoque.indisponivel`;
+- `pagamento.criado`;
 - `pagamento.aprovado`;
 - `pagamento.recusado`;
 - `pedido.enviado`.

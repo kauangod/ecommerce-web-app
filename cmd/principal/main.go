@@ -20,7 +20,6 @@ import (
 	e "github.com/bdsromulo/Trab2-SistDistribuidos/internal/events"
 	s "github.com/bdsromulo/Trab2-SistDistribuidos/internal/signature"
 	u "github.com/bdsromulo/Trab2-SistDistribuidos/internal/utils"
-	fiber "github.com/gofiber/fiber/v3"
 	uuid "github.com/google/uuid"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -71,7 +70,7 @@ func main() {
 	)
 	u.FailOnError(err, "Erro ao declarar a fila")
 
-	for _, rk := range []string{e.PedidoEstoqueOK, e.EstoqueIndisponivel, e.PagamentoAprovado, e.PagamentoRecusado, e.PedidoEnviado} {
+	for _, rk := range []string{e.PedidoEstoqueOK, e.EstoqueIndisponivel, e.PagamentoCriado, e.PagamentoAprovado, e.PagamentoRecusado, e.PedidoEnviado} {
 		err = ch.QueueBind(
 			"fila.principal",
 			rk,
@@ -124,6 +123,7 @@ func main() {
 	}
 
 	pedidos := NovosPedidos()
+	hub := NovoHubSSE(pedidos)
 	avisar := func(msg string) { fmt.Printf("\n[evento] %s\n", msg) }
 	servico := NovoServico(pedidos, publicar, avisar)
 
@@ -147,92 +147,15 @@ func main() {
 
 			if err := servico.TratarEvento(env); err != nil {
 				avisar(fmt.Sprintf("Erro ao tratar %s: %v. Evento descartado.", env.EventType, err))
+			} else {
+				hub.Publicar(env)
 			}
 			d.Ack(false)
 		}
 	}()
 
 	go func() {
-		app := fiber.New()
-		app.Get("/produtos", func(c fiber.Ctx) error {
-			l := listarEstoque()
-			return c.JSON(l)
-		})
-
-		app.Delete("/pedidos/:id", func(c fiber.Ctx) error {
-			err := servico.ExcluirPeloUsuario(c.Params("id"))
-			u.FailOnError(err, "Erro ao excluir o pedido")
-			return c.SendStatus(fiber.StatusAccepted)
-		})
-
-		app.Put("/interesses/:categoria", func(c fiber.Ctx) error {
-			req := struct {
-				Email string `json:"email"`
-			}{}
-			err := c.Bind().Body(&req)
-			u.FailOnError(err, "Erro")
-			email := req.Email
-			if email == "" {
-				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-					"erro": "e-mail obrigatório"})
-			}
-			interesse := e.InteresseCategoria{
-				Categoria: c.Params("categoria"),
-				Email:     email,
-			}
-			if err := Registrar(interesse); err != nil {
-				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-					"erro": "falha ao registrar interesse"})
-			}
-			return c.SendStatus(fiber.StatusAccepted)
-		})
-
-		app.Delete("/interesses/:categoria", func(c fiber.Ctx) error {
-			email := c.Query("email")
-			interesse := e.InteresseCategoria{
-				Categoria: c.Params("categoria"),
-				Email:     email,
-			}
-			if email == "" {
-				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-					"erro": "e-mail obrigatório"})
-			}
-			if err := Cancelar(interesse); err != nil {
-				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-					"erro": "falha ao cancelar interesse"})
-			}
-			return c.SendStatus(fiber.StatusAccepted)
-		})
-
-		app.Post("/pedidos", func(c fiber.Ctx) error {
-			req := struct {
-				Itens []struct {
-					ProdutoID  string `json:"produto_id"`
-					Quantidade int    `json:"quantidade"`
-				} `json:"itens"`
-			}{}
-			err := c.Bind().Body(&req)
-			u.FailOnError(err, "Erro")
-
-			items := []e.Item{}
-			for _, i := range req.Itens {
-				prod, ok := buscarProdutoCatalogo(produtos, i.ProdutoID)
-				if !ok || i.Quantidade <= 0 {
-					return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"erro": "body inválido ou sem itens"})
-				}
-				items = append(items, e.Item{
-					ProdutoID:     i.ProdutoID,
-					Nome:          prod.Nome,
-					Quantidade:    i.Quantidade,
-					PrecoUnitario: prod.Preco,
-				})
-			}
-			pedido, err := servico.CriarPedido(items)
-			u.FailOnError(err, "Erro ao criar o pedido")
-
-			return c.Status(fiber.StatusCreated).JSON(pedido)
-		})
-
+		app := configurarHTTP(servico, pedidos, produtos, hub)
 		log.Fatal(app.Listen(":3001"))
 	}()
 	NovoMenu(servico, pedidos, produtos, os.Stdin, os.Stdout).Executar()
@@ -249,15 +172,21 @@ type ProdutoEstoque struct {
 	Availability int    `json:"availability"`
 }
 
-func listarEstoque() []ProdutoEstoque {
+func listarEstoque() ([]ProdutoEstoque, error) {
 	response, err := cliente_estoque.Get(url_estoque)
-	u.FailOnError(err, "Erro ao listar estoque")
+	if err != nil {
+		return nil, fmt.Errorf("listar estoque: %w", err)
+	}
 	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("listar estoque: HTTP %d", response.StatusCode)
+	}
 
 	l := []ProdutoEstoque{}
-	err = json.NewDecoder(response.Body).Decode(&l)
-	u.FailOnError(err, "Erro ao decodificar resposta do estoque")
-	return l
+	if err := json.NewDecoder(response.Body).Decode(&l); err != nil {
+		return nil, fmt.Errorf("decodificar resposta do estoque: %w", err)
+	}
+	return l, nil
 }
 
 func buscarProdutoCatalogo(produtos []catalogo.Produto, id string) (catalogo.Produto, bool) {

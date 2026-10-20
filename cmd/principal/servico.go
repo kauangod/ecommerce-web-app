@@ -33,12 +33,15 @@ func NovoServico(pedidos *Pedidos, publicar func(string, any) error, avisar func
 // CriarPedido registra o pedido e agenda a publicação de pedido.criado para
 // quando a janela de cancelamento terminar.
 func (s *Servico) CriarPedido(itens []events.Item) (Pedido, error) {
-	pedido := s.pedidos.Criar(itens)
+	return s.CriarPedidoPara("", itens)
+}
+
+// CriarPedidoPara registra um pedido vinculado ao e-mail do cliente.
+func (s *Servico) CriarPedidoPara(email string, itens []events.Item) (Pedido, error) {
+	pedido := s.pedidos.CriarPara(email, itens)
 	time.AfterFunc(s.janela, func() { s.confirmar(pedido.ID) })
 	return pedido, nil
 }
-
-
 
 // confirmar encerra a janela de cancelamento: se o pedido não foi excluído,
 // ele passa a aguardar o estoque e pedido.criado é publicado.
@@ -98,6 +101,14 @@ func (s *Servico) TratarEvento(env events.Envelope) error {
 		}
 		pedidoID = d.PedidoID
 		_, err = s.pedidos.Avancar(d.PedidoID, StatusAguardandoPagto, "estoque reservado")
+
+	case events.PagamentoCriado:
+		var d events.PagamentoCriadoDados
+		if err := env.Decodificar(&d); err != nil {
+			return err
+		}
+		pedidoID = d.PedidoID
+		_, err = s.pedidos.RegistrarCheckout(d.PedidoID, d.CobrancaID, d.CheckoutURL)
 
 	case events.EstoqueIndisponivel:
 		var d events.EstoqueIndisponivelDados

@@ -1,4 +1,4 @@
-const API_BASE = document.querySelector('meta[name="api-base"]')?.content?.replace(/\/$/, '') || '/api';
+const API_BASE = document.querySelector('meta[name="api-base"]')?.content?.replace(/\/$/, '') || '';
 const DEMO_MODE = new URLSearchParams(window.location.search).get('demo') === '1';
 const DEMO_ORDERS_KEY = 'fluxo:demo-pedidos:v1';
 const DEMO_PRODUCTS = [
@@ -62,7 +62,7 @@ function first(object, keys, fallback = undefined) {
 }
 
 export function normalizeProduct(raw) {
-  const quantidade = Number(first(raw, ['quantidade', 'estoque', 'stock'], NaN));
+  const quantidade = Number(first(raw, ['quantidade', 'availability', 'estoque', 'stock'], NaN));
   const disponivelInformado = first(raw, ['disponivel', 'available'], undefined);
   return {
     id: String(first(raw, ['id', 'produto_id', 'produtoId'], '')),
@@ -76,21 +76,22 @@ export function normalizeProduct(raw) {
 
 export function normalizeOrder(raw) {
   const source = raw?.pedido || raw?.order || raw || {};
-  const items = first(source, ['itens', 'items'], []);
+  const items = first(source, ['Itens', 'itens', 'items'], []);
   return {
-    id: String(first(source, ['id', 'pedido_id', 'pedidoId'], '')),
+    id: String(first(source, ['ID', 'id', 'pedido_id', 'pedidoId'], '')),
+    email: String(first(source, ['Email', 'email'], '')),
     itens: Array.isArray(items) ? items.map((item) => ({
-      produto_id: String(first(item, ['produto_id', 'produtoId', 'id'], '')),
-      nome: String(first(item, ['nome', 'name'], 'Produto')),
-      quantidade: Number(first(item, ['quantidade', 'quantity'], 1)),
-      preco_unitario: Number(first(item, ['preco_unitario', 'precoUnitario', 'preco', 'price'], 0)),
+      produto_id: String(first(item, ['ProdutoID', 'produto_id', 'produtoId', 'id'], '')),
+      nome: String(first(item, ['Nome', 'nome', 'name'], 'Produto')),
+      quantidade: Number(first(item, ['Quantidade', 'quantidade', 'quantity'], 1)),
+      preco_unitario: Number(first(item, ['PrecoUnitario', 'preco_unitario', 'precoUnitario', 'preco', 'price'], 0)),
     })) : [],
-    valor_total: Number(first(source, ['valor_total', 'valorTotal', 'total'], 0)),
-    status: String(first(source, ['status', 'estado'], 'aguardando confirmação')),
-    motivo: String(first(source, ['motivo', 'reason'], '')),
-    detalhe: String(first(source, ['detalhe', 'details'], '')),
-    criado_em: first(source, ['criado_em', 'criadoEm', 'created_at', 'createdAt'], null),
-    checkout_url: first(source, ['checkout_url', 'checkoutUrl', 'url_checkout', 'payment_url', 'url_pagamento'], null),
+    valor_total: Number(first(source, ['ValorTotal', 'valor_total', 'valorTotal', 'total'], 0)),
+    status: String(first(source, ['Status', 'status', 'estado'], 'aguardando confirmação')),
+    motivo: String(first(source, ['Motivo', 'motivo', 'reason'], '')),
+    detalhe: String(first(source, ['Detalhe', 'detalhe', 'details'], '')),
+    criado_em: first(source, ['CriadoEm', 'criado_em', 'criadoEm', 'created_at', 'createdAt'], null),
+    checkout_url: first(source, ['CheckoutURL', 'checkout_url', 'checkoutUrl', 'url_checkout', 'payment_url', 'url_pagamento'], null),
   };
 }
 
@@ -101,14 +102,14 @@ export async function listProducts() {
   return list.map(normalizeProduct).filter((product) => product.id);
 }
 
-export async function listOrders() {
-  if (DEMO_MODE) return demoOrders().map(normalizeOrder);
-  const payload = await request('/pedidos');
+export async function listOrders(email) {
+  if (DEMO_MODE) return demoOrders().map(normalizeOrder).filter((order) => !email || order.email === email);
+  const payload = await request(`/pedidos?email=${encodeURIComponent(email)}`);
   const list = Array.isArray(payload) ? payload : payload?.pedidos || payload?.orders || [];
   return list.map(normalizeOrder).filter((order) => order.id);
 }
 
-export async function createOrder(items) {
+export async function createOrder(items, email) {
   if (DEMO_MODE) {
     const orderItems = items.map((item) => {
       const product = DEMO_PRODUCTS.find((candidate) => candidate.id === item.id);
@@ -121,6 +122,7 @@ export async function createOrder(items) {
     });
     const order = normalizeOrder({
       id: crypto.randomUUID().slice(0, 8),
+      email,
       itens: orderItems,
       valor_total: orderItems.reduce((total, item) => total + item.quantidade * item.preco_unitario, 0),
       status: 'aguardando confirmação',
@@ -132,6 +134,7 @@ export async function createOrder(items) {
   const payload = await request('/pedidos', {
     method: 'POST',
     body: JSON.stringify({
+      email,
       itens: items.map((item) => ({ produto_id: item.id, quantidade: item.quantidade })),
     }),
   });
@@ -154,23 +157,25 @@ export async function cancelOrder(id) {
 
 export async function subscribePromotions(email, categories) {
   if (DEMO_MODE) return { email, categorias: categories };
-  return request('/interesses-promocao', {
-    method: 'POST',
-    body: JSON.stringify({ email, categorias: categories }),
-  });
+  await Promise.all(categories.map((category) => request(`/interesses/${encodeURIComponent(category)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ email }),
+  })));
+  return { email, categorias: categories };
 }
 
 export async function unsubscribePromotions(email, categories = []) {
   if (DEMO_MODE) return { email, categorias: categories };
-  return request('/interesses-promocao', {
+  const targets = categories.length ? categories : ['A', 'B', 'C'];
+  await Promise.all(targets.map((category) => request(`/interesses/${encodeURIComponent(category)}?email=${encodeURIComponent(email)}`, {
     method: 'DELETE',
-    body: JSON.stringify({ email, categorias: categories }),
-  });
+  })));
+  return { email, categorias: targets };
 }
 
-export function eventStreamUrl() {
+export function eventStreamUrl(email) {
   if (DEMO_MODE) return null;
-  return `${API_BASE}/eventos`;
+  return `${API_BASE}/eventos?email=${encodeURIComponent(email)}`;
 }
 
 export function normalizeSseEvent(event) {

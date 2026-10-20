@@ -15,11 +15,11 @@ const money = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL
 const dateTime = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
 const CART_KEY = 'fluxo:carrinho:v1';
 const ORDERS_KEY = 'fluxo:pedidos:v1';
+const CLIENT_EMAIL_KEY = 'fluxo:cliente-email:v1';
 
-const categoryNames = { A: 'Tecnologia', B: 'Estudos', C: 'Casa & rotina' };
-const categoryGlyphs = { A: '⌘', B: '✎', C: '✦' };
 const statusByEvent = {
   'pedido.estoque_ok': 'aguardando pagamento',
+  'pagamento.criado': 'aguardando pagamento',
   'estoque.indisponivel': 'excluído',
   'pagamento.aprovado': 'pagamento aprovado',
   'pagamento.recusado': 'excluído',
@@ -28,11 +28,13 @@ const statusByEvent = {
 
 const state = {
   products: [],
-  orders: restore(ORDERS_KEY, []),
+  orders: [],
   cart: restore(CART_KEY, []),
+  email: restore(CLIENT_EMAIL_KEY, ''),
   category: 'todas',
   search: '',
   eventSource: null,
+  checkoutTabs: new Map(),
 };
 
 const elements = {
@@ -47,12 +49,12 @@ const elements = {
   cartDrawer: document.querySelector('#cart-drawer'),
   drawerBackdrop: document.querySelector('#drawer-backdrop'),
   checkout: document.querySelector('#checkout-button'),
+  checkoutEmail: document.querySelector('#checkout-email'),
   ordersList: document.querySelector('#orders-list'),
   refreshOrders: document.querySelector('#refresh-orders'),
   promoForm: document.querySelector('#promo-form'),
   promoFeedback: document.querySelector('#promo-feedback'),
   unsubscribe: document.querySelector('#unsubscribe'),
-  connection: document.querySelector('#connection-status'),
   toastRegion: document.querySelector('#toast-region'),
 };
 
@@ -62,6 +64,10 @@ function restore(key, fallback) {
 
 function persist(key, value) {
   try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* armazenamento indisponível */ }
+}
+
+function ordersKey() {
+  return `${ORDERS_KEY}:${state.email}`;
 }
 
 function escapeHtml(value) {
@@ -119,8 +125,6 @@ function renderProducts() {
     const fragment = elements.productTemplate.content.cloneNode(true);
     const card = fragment.querySelector('.product-card');
     card.dataset.category = product.categoria;
-    fragment.querySelector('.product-category').textContent = categoryNames[product.categoria] || `Categoria ${product.categoria}`;
-    fragment.querySelector('.product-glyph').textContent = categoryGlyphs[product.categoria] || '•';
     fragment.querySelector('.product-code').textContent = product.id;
     fragment.querySelector('.product-name').textContent = product.nome;
     fragment.querySelector('.product-price').textContent = money.format(product.preco);
@@ -174,7 +178,7 @@ function renderCart() {
   elements.cartItems.replaceChildren();
 
   if (!state.cart.length) {
-    elements.cartItems.innerHTML = '<div class="cart-empty"><span aria-hidden="true">✦</span><p>Seu carrinho está vazio</p><small>Escolha algo no catálogo para começar.</small></div>';
+    elements.cartItems.innerHTML = '<div class="cart-empty"><p>Seu carrinho está vazio</p><small>Escolha algo no catálogo para começar.</small></div>';
     return;
   }
 
@@ -182,7 +186,6 @@ function renderCart() {
     const row = document.createElement('div');
     row.className = 'cart-item';
     row.innerHTML = `
-      <div class="cart-item-art" aria-hidden="true">${categoryGlyphs[item.categoria] || '•'}</div>
       <div class="cart-item-info"><strong>${escapeHtml(item.nome)}</strong><small>${money.format(item.preco)} cada</small><div class="quantity-control"><button type="button" data-action="minus" aria-label="Diminuir quantidade">&minus;</button><span>${item.quantidade}</span><button type="button" data-action="plus" aria-label="Aumentar quantidade">+</button></div></div>
       <button class="remove-item" type="button" aria-label="Remover ${escapeHtml(item.nome)}">×</button>`;
     row.querySelector('[data-action="minus"]').addEventListener('click', () => updateCartItem(item.id, -1));
@@ -206,6 +209,13 @@ function openCart(open) {
 
 async function checkout() {
   if (!state.cart.length) return;
+  if (!elements.checkoutEmail.checkValidity()) {
+    elements.checkoutEmail.reportValidity();
+    return;
+  }
+  state.email = elements.checkoutEmail.value.trim().toLocaleLowerCase('pt-BR');
+  persist(CLIENT_EMAIL_KEY, state.email);
+  connectEvents();
   const checkoutTab = window.open('', '_blank');
   if (checkoutTab) {
     checkoutTab.document.title = 'Preparando checkout…';
@@ -213,9 +223,9 @@ async function checkout() {
   }
   setBusy(elements.checkout, true, 'Criando pedido…');
   try {
-    const order = await createOrder(state.cart);
+    const order = await createOrder(state.cart, state.email);
     state.orders = mergeOrder(state.orders, order);
-    persist(ORDERS_KEY, state.orders);
+    persist(ordersKey(), state.orders);
     state.cart = [];
     saveCart();
     renderOrders();
@@ -226,7 +236,10 @@ async function checkout() {
       if (checkoutTab) checkoutTab.location.replace(order.checkout_url);
       else toast('O navegador bloqueou a nova aba. Use o botão de pagamento no pedido.', 'error');
     } else {
-      checkoutTab?.close();
+      if (checkoutTab) {
+        state.checkoutTabs.set(order.id, checkoutTab);
+        checkoutTab.document.body.innerHTML = '<p style="font:16px system-ui;padding:32px">Aguardando a confirmação do estoque para abrir o pagamento…</p>';
+      }
       toast('Aguardando o estoque confirmar para liberar o pagamento.');
     }
   } catch (error) {
@@ -248,11 +261,16 @@ function mergeOrder(orders, incoming) {
 }
 
 async function loadOrders(showFeedback = false) {
+  if (!state.email) {
+    state.orders = [];
+    renderOrders();
+    return;
+  }
   if (showFeedback) setBusy(elements.refreshOrders, true, 'Atualizando…');
   try {
-    const remote = await listOrders();
+    const remote = await listOrders(state.email);
     state.orders = remote;
-    persist(ORDERS_KEY, state.orders);
+    persist(ordersKey(), state.orders);
     renderOrders();
   } catch (error) {
     renderOrders();
@@ -306,7 +324,7 @@ async function handleCancelOrder(order, button) {
     await cancelOrder(order.id);
     order.status = 'excluído';
     order.motivo = 'usuario';
-    persist(ORDERS_KEY, state.orders);
+    persist(ordersKey(), state.orders);
     renderOrders();
     toast(`Pedido ${order.id} cancelado.`);
   } catch (error) {
@@ -359,16 +377,15 @@ async function handleUnsubscribe() {
 
 function connectEvents() {
   state.eventSource?.close();
-  const url = eventStreamUrl();
+  if (!state.email) {
+    return;
+  }
+  const url = eventStreamUrl(state.email);
   if (!url) {
-    setConnection('online', 'Modo demonstração');
     return;
   }
   const source = new EventSource(url);
   state.eventSource = source;
-  setConnection('connecting', 'Conectando');
-  source.onopen = () => setConnection('online', 'Ao vivo');
-  source.onerror = () => setConnection('offline', 'Reconectando');
   source.onmessage = handleSse;
   for (const type of Object.keys(statusByEvent)) source.addEventListener(type, handleSse);
 }
@@ -385,14 +402,17 @@ function handleSse(event) {
   order.motivo = update.motivo || order.motivo;
   order.detalhe = update.detalhe || order.detalhe;
   order.checkout_url = update.checkout_url || order.checkout_url;
-  persist(ORDERS_KEY, state.orders);
+  const checkoutTab = state.checkoutTabs.get(order.id);
+  if (checkoutTab && order.checkout_url) {
+    checkoutTab.location.replace(order.checkout_url);
+    state.checkoutTabs.delete(order.id);
+  } else if (checkoutTab && order.status === 'excluído') {
+    checkoutTab.close();
+    state.checkoutTabs.delete(order.id);
+  }
+  persist(ordersKey(), state.orders);
   renderOrders();
   toast(`Pedido ${order.id}: ${order.status}.`);
-}
-
-function setConnection(stateName, label) {
-  elements.connection.dataset.state = stateName;
-  elements.connection.querySelector('.connection-label').textContent = label;
 }
 
 function bindEvents() {
@@ -401,6 +421,15 @@ function bindEvents() {
   elements.drawerBackdrop.addEventListener('click', () => openCart(false));
   document.addEventListener('keydown', (event) => { if (event.key === 'Escape') openCart(false); });
   elements.checkout.addEventListener('click', checkout);
+  elements.checkoutEmail.addEventListener('change', () => {
+    if (!elements.checkoutEmail.checkValidity()) return;
+    state.email = elements.checkoutEmail.value.trim().toLocaleLowerCase('pt-BR');
+    persist(CLIENT_EMAIL_KEY, state.email);
+    state.orders = restore(ordersKey(), []);
+    renderOrders();
+    loadOrders(false);
+    connectEvents();
+  });
   elements.refreshOrders.addEventListener('click', () => loadOrders(true));
   elements.promoForm.addEventListener('submit', handlePromotionSubmit);
   elements.unsubscribe.addEventListener('click', handleUnsubscribe);
@@ -418,6 +447,8 @@ function bindEvents() {
 }
 
 bindEvents();
+elements.checkoutEmail.value = state.email;
+state.orders = state.email ? restore(ordersKey(), []) : [];
 renderCart();
 renderOrders();
 loadCatalog();
