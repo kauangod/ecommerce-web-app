@@ -41,8 +41,6 @@ func (s *Servico) CriarPedido(itens []events.Item, cliente string) (Pedido, erro
 	return pedido, nil
 }
 
-
-
 // confirmar encerra a janela de cancelamento: se o pedido não foi excluído,
 // ele passa a aguardar o estoque e pedido.criado é publicado.
 func (s *Servico) confirmar(id string) {
