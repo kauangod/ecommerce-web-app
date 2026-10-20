@@ -3,12 +3,13 @@ module github.com/bdsromulo/Trab2-SistDistribuidos
 go 1.26.0
 
 require (
+	github.com/gofiber/fiber/v3 v3.6.1
 	github.com/google/uuid v1.6.0
+	github.com/joho/godotenv v1.5.1
 	github.com/rabbitmq/amqp091-go v1.14.0
 )
 
 require (
-	github.com/gofiber/fiber/v3 v3.6.1 // indirect
 	github.com/gofiber/schema v1.8.8 // indirect
 	github.com/gofiber/utils/v2 v2.6.2 // indirect
 	github.com/klauspost/compress v1.20.3 // indirect

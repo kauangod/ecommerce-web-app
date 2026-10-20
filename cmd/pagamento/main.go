@@ -1,175 +1,131 @@
-// Microsserviço Pagamento: aprova ou recusa os pagamentos.
+// MS Pagamento: estoque confirmado -> cobrança REST -> webhook -> evento.
 package main
 
 import (
-	"crypto/rand"
-	"encoding/base64"
+	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log"
-	"math/big"
+	"os"
+	"os/signal"
 	"time"
 
-	e "github.com/bdsromulo/Trab2-SistDistribuidos/internal/events"
-	s "github.com/bdsromulo/Trab2-SistDistribuidos/internal/signature"
-	u "github.com/bdsromulo/Trab2-SistDistribuidos/internal/utils"
-	uuid "github.com/google/uuid"
+	"github.com/bdsromulo/Trab2-SistDistribuidos/internal/events"
+	"github.com/bdsromulo/Trab2-SistDistribuidos/internal/execucao"
+	"github.com/bdsromulo/Trab2-SistDistribuidos/internal/mensageria"
+	"github.com/bdsromulo/Trab2-SistDistribuidos/internal/pagamento"
+	"github.com/bdsromulo/Trab2-SistDistribuidos/internal/signature"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 func main() {
-
-	conn, err := amqp.Dial("amqp://ecommerce:ecommerce@localhost:5672/")
-	u.FailOnError(err, "Erro ao conectar ao RabbitMQ")
-	defer conn.Close()
-
-	ch, err := conn.Channel()
-	u.FailOnError(err, "Erro ao abrir canal")
-	defer ch.Close()
-
-	ch.ExchangeDeclare(
-		"eCommerce",
-		"direct",
-		true,
-		false,
-		false,
-		false,
-		nil,
-	)
-	u.FailOnError(err, "Erro ao declarar a exchange")
-
-	_, err = ch.QueueDeclare(
-		"fila.pagamento",
-		true,
-		false,
-		false,
-		false,
-		nil,
-	)
-	u.FailOnError(err, "Erro ao declarar a fila")
-
-	err = ch.QueueBind(
-		"fila.pagamento",
-		e.PedidoEstoqueOK,
-		"eCommerce",
-		false,
-		nil,
-	)
-	u.FailOnError(err, "Erro ao bindar a fila")
-
-	pk := s.LoadPrivateKey("cmd/pagamento/keys/private_key.pem")
-	if pk == nil {
-		log.Fatal("Chave privada não encontrada em cmd/pagamento/keys/private_key.pem. " +
-			"Gere as chaves uma única vez com: go run ./cmd/gerar-chaves")
+	ctx, cancelar := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer cancelar()
+	if err := executar(ctx); err != nil {
+		log.Fatal(err)
 	}
+}
 
-	pub_key_ms_e := s.LoadPublicKey("cmd/pagamento/estoque-pub/public_key.pem")
-
-	events, err := ch.Consume(
-		"fila.pagamento",
-		"MS_Pagamento",
-		false,
-		false,
-		false,
-		false,
-		nil,
-	)
-	u.FailOnError(err, "Erro ao registrar o consumidor")
-
-	var forever chan struct{}
-	var env e.Envelope
-	go func() {
-		for d := range events {
-			err = json.Unmarshal(d.Body, &env)
-			if !s.VerifySignature(pub_key_ms_e, string(env.Data), []byte(env.Signature)) {
-				log.Printf("Assinatura inválida do evento %s. Evento descartado.", env.EventType)
-				d.Ack(false)
-				continue
-			}
-			if env.EventType == e.PedidoEstoqueOK {
-				random_number, err := rand.Int(rand.Reader, big.NewInt(100))
-				if random_number.Cmp(big.NewInt(80)) <= 0 {
-					var data e.PedidoEstoqueOKDados
-					err = env.Decodificar(&data)
-					u.FailOnError(err, "Erro ao decodificar os dados do envelope")
-
-					pag_aprv := e.PagamentoAprovadoDados{
-						PedidoID:   data.PedidoID,
-						ValorTotal: data.ValorTotal,
-					}
-					pag_json, err := json.Marshal(pag_aprv)
-					u.FailOnError(err, "Erro ao codificar os dados do pagamento aprovado")
-					body := e.Envelope{
-						EventID:    uuid.NewString(),
-						EventType:  e.PagamentoAprovado,
-						Producer:   e.ProdutorDoEvento[e.PagamentoAprovado],
-						OccurredAt: time.Now().UTC().Truncate(time.Millisecond),
-						Data:       pag_json,
-						Signature:  base64.StdEncoding.EncodeToString(s.SignPayload(pk, string(pag_json))),
-					}
-
-					body_json, err := json.Marshal(body)
-					u.FailOnError(err, "Erro ao codificar o envelope do pagamento aprovado")
-
-					err = ch.Publish(
-						"eCommerce",
-						e.PagamentoAprovado,
-						false,
-						false,
-						amqp.Publishing{
-							ContentType:  "application/json",
-							DeliveryMode: amqp.Persistent,
-							MessageId:    body.EventID,
-							Timestamp:    body.OccurredAt,
-							Body:         []byte(body_json),
-						})
-					u.FailOnError(err, "Erro ao publicar o evento de pagamento aprovado")
-					log.Printf("Pagamento aprovado para o pedido %s (R$ %.2f)", data.PedidoID, data.ValorTotal)
-				} else {
-					var data e.PedidoEstoqueOKDados
-					err = env.Decodificar(&data)
-					pag_rec := e.PagamentoRecusadoDados{
-						PedidoID: data.PedidoID,
-						Motivo:   data.PedidoID + " - Pagamento recusado pelo MS Pagamento",
-					}
-					pag_json, err := json.Marshal(pag_rec)
-					u.FailOnError(err, "Erro ao codificar os dados do pagamento recusado")
-
-					body := e.Envelope{
-						EventID:    uuid.NewString(),
-						EventType:  e.PagamentoRecusado,
-						Producer:   e.ProdutorDoEvento[e.PagamentoRecusado],
-						OccurredAt: time.Now().UTC().Truncate(time.Millisecond),
-						Data:       pag_json,
-						Signature:  base64.StdEncoding.EncodeToString(s.SignPayload(pk, string(pag_json))),
-					}
-					body_json, err := json.Marshal(body)
-					u.FailOnError(err, "Erro ao codificar o envelope do pagamento recusado")
-
-					err = ch.Publish(
-						"eCommerce",
-						e.PagamentoRecusado,
-						false,
-						false,
-						amqp.Publishing{
-							ContentType:  "application/json",
-							DeliveryMode: amqp.Persistent,
-							MessageId:    body.EventID,
-							Timestamp:    body.OccurredAt,
-							Body:         []byte(body_json),
-						})
-					u.FailOnError(err, "Erro ao publicar o evento de pagamento recusado")
-					log.Printf("Pagamento recusado para o pedido %s", data.PedidoID)
-
-				}
-			} else {
-				log.Printf("Tipo de evento (%s) não suportado no MS Pagamento. Evento descartado.", env.EventType)
-				d.Ack(false)
-				continue
-			}
-			d.Ack(false)
+func executar(ctx context.Context) error {
+	if err := execucao.CarregarEnv(".env"); err != nil {
+		return err
+	}
+	webhook := execucao.Valor("PAGAMENTO_WEBHOOK_URL", "http://localhost:8082/webhooks/pagamento")
+	mockURL := execucao.Valor("MOCK_PUBLIC_URL", "http://localhost:8083")
+	if !pagamento.URLValida(webhook) || !pagamento.URLValida(mockURL) {
+		return fmt.Errorf("configure URLs HTTP válidas para Pagamento e Mock")
+	}
+	chave := signature.LoadPrivateKey("cmd/pagamento/keys/private_key.pem")
+	if chave == nil {
+		return fmt.Errorf("chave privada ausente; execute go run ./cmd/gerar-chaves uma vez")
+	}
+	publicaEstoque := signature.LoadPublicKey("cmd/pagamento/estoque-pub/public_key.pem")
+	conn, err := amqp.Dial(execucao.Valor("RABBITMQ_URL", "amqp://ecommerce:ecommerce@localhost:5672/"))
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	ch, err := conn.Channel()
+	if err != nil {
+		return err
+	}
+	defer ch.Close()
+	if err := ch.ExchangeDeclare("eCommerce", "direct", true, false, false, false, nil); err != nil {
+		return err
+	}
+	if _, err := ch.QueueDeclare("fila.pagamento", true, false, false, false, nil); err != nil {
+		return err
+	}
+	if err := ch.QueueBind("fila.pagamento", events.PedidoEstoqueOK, "eCommerce", false, nil); err != nil {
+		return err
+	}
+	if err := ch.Qos(1, 0, false); err != nil {
+		return err
+	}
+	publicador, err := mensageria.NovoPublicador(conn, chave, events.Pagamento)
+	if err != nil {
+		return err
+	}
+	defer publicador.Close()
+	servico := pagamento.NovoServico(&pagamento.ClienteMock{
+		URL: mockURL, Token: execucao.Valor("MOCK_API_TOKEN", "desenvolvimento-local"), HTTP: execucao.ClienteHTTP(),
+	}, webhook, func(ctx context.Context, tipo string, dados any) error {
+		if err := publicador.Publicar(ctx, "eCommerce", tipo, dados); err != nil {
+			return err
 		}
+		log.Printf("Publicado %s: %+v", tipo, dados)
+		return nil
+	})
+	entregas, err := ch.Consume("fila.pagamento", "MS_Pagamento", false, false, false, false, nil)
+	if err != nil {
+		return err
+	}
+	erroHTTP := make(chan error, 1)
+	go func() {
+		erroHTTP <- execucao.Servir(ctx, execucao.Valor("PAGAMENTO_ADDR", "127.0.0.1:8082"), pagamento.Handler(servico))
 	}()
-
-	log.Printf(" [*] Aguardando eventos de estoque...")
-	<-forever
+	log.Printf("Aguardando estoque; webhook em %s", webhook)
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case err := <-erroHTTP:
+			return err
+		case d, aberto := <-entregas:
+			if !aberto {
+				return fmt.Errorf("consumidor de pagamentos desconectado")
+			}
+			env, err := mensageria.Validar(d.Body, d.RoutingKey, events.PedidoEstoqueOK, events.Estoque, publicaEstoque)
+			var dados events.PedidoEstoqueOKDados
+			if err == nil {
+				err = json.Unmarshal(env.Data, &dados)
+			}
+			if err != nil {
+				log.Printf("Evento de estoque descartado: %v", err)
+				if err := d.Ack(false); err != nil {
+					return err
+				}
+				continue
+			}
+			err = servico.EstoqueConfirmado(ctx, dados)
+			if errors.Is(err, pagamento.ErrInvalido) || errors.Is(err, pagamento.ErrConflito) {
+				log.Printf("Dados de estoque descartados: %v", err)
+			} else if err != nil {
+				log.Printf("Cobrança será tentada novamente: %v", err)
+				select {
+				case <-time.After(2 * time.Second):
+				case <-ctx.Done():
+					return nil
+				}
+				if err := d.Nack(false, true); err != nil {
+					return err
+				}
+				continue
+			}
+			if err := d.Ack(false); err != nil {
+				return err
+			}
+		}
+	}
 }

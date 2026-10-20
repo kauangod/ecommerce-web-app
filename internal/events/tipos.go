@@ -18,6 +18,7 @@ const (
 	EstoqueIndisponivel = "estoque.indisponivel"
 	PagamentoAprovado   = "pagamento.aprovado"
 	PagamentoRecusado   = "pagamento.recusado"
+	PagamentoCriado     = "pagamento.criado"
 	PedidoEnviado       = "pedido.enviado"
 
 	PrefixoPromocao    = "promocao.categoria."
@@ -46,6 +47,7 @@ var ProdutorDoEvento = map[string]string{
 	EstoqueIndisponivel: Estoque,
 	PagamentoAprovado:   Pagamento,
 	PagamentoRecusado:   Pagamento,
+	PagamentoCriado:     Pagamento,
 	PedidoEnviado:       Entrega,
 	PromocaoCategoriaA:  Promocoes,
 	PromocaoCategoriaB:  Promocoes,

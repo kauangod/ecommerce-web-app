@@ -52,6 +52,7 @@ func TestProdutorDoEventoCobreTodosOsTipos(t *testing.T) {
 	tipos := []string{
 		PedidoCriado, PedidoExcluido, PedidoEstoqueOK, EstoqueIndisponivel,
 		PagamentoAprovado, PagamentoRecusado, PedidoEnviado,
+		PagamentoCriado, InteressePromocao, CancelarInteresse,
 		TipoPromocao("A"), TipoPromocao("B"), TipoPromocao("C"),
 	}
 	if len(ProdutorDoEvento) != len(tipos) {
