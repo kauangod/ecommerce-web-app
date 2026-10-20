@@ -1,18 +1,18 @@
 package main
 
 import (
-	"sort"
+	"encoding/json"
 	"log"
 	"os"
-	"encoding/json"
+	"sort"
 
-	fiber "github.com/gofiber/fiber/v3"
 	u "github.com/bdsromulo/Trab2-SistDistribuidos/internal/utils"
+	fiber "github.com/gofiber/fiber/v3"
 )
 
 type ProdutoEstoque struct {
-	ID            string `json:"id"`
-	Availability  int `json:"availability"`
+	ID           string `json:"id"`
+	Availability int    `json:"availability"`
 }
 
 type Estoque struct {
@@ -20,7 +20,7 @@ type Estoque struct {
 }
 
 func loadEstoque() Estoque {
-	content, err := os.ReadFile("data/estoque.json")
+	content, err := os.ReadFile("data/estoque_original.json")
 	u.FailOnError(err, "Erro ao carregar o estoque")
 
 	var l []ProdutoEstoque
@@ -35,6 +35,26 @@ func loadEstoque() Estoque {
 	return e
 }
 
+func saveEstoque(est Estoque) {
+	l := make([]ProdutoEstoque, 0, len(est.Produtos))
+	for _, p := range est.Produtos {
+		l = append(l, *p)
+	}
+	sort.Slice(l, func(i, j int) bool {
+		return l[i].ID < l[j].ID
+	})
+
+	data, err := json.MarshalIndent(l, "", "  ")
+	u.FailOnError(err, "Erro ao serializar os produtos")
+
+	tmp := "data/estoque.json.tmp"
+	err = os.WriteFile(tmp, data, 0o644)
+	u.FailOnError(err, "Erro ao salvar o estoque")
+
+	err = os.Rename(tmp, "data/estoque.json")
+	u.FailOnError(err, "Erro ao renomear o arquivo do estoque")
+}
+
 func imprimirEstoque(est Estoque) {
 	ids := make([]string, 0, len(est.Produtos))
 	for id := range est.Produtos {
@@ -47,10 +67,10 @@ func imprimirEstoque(est Estoque) {
 	}
 }
 
-func ordenaLista(l []fiber.Map){
+func ordenaLista(l []fiber.Map) {
 	sort.Slice(l, func(i, j int) bool {
-        return l[i]["id"].(string) < l[j]["id"].(string)
-    })
+		return l[i]["id"].(string) < l[j]["id"].(string)
+	})
 }
 
 /*func main() {

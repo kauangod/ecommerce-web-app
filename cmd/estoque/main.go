@@ -5,15 +5,15 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"log"
-	"time"
 	"sync"
+	"time"
 
 	e "github.com/bdsromulo/Trab2-SistDistribuidos/internal/events"
 	s "github.com/bdsromulo/Trab2-SistDistribuidos/internal/signature"
 	u "github.com/bdsromulo/Trab2-SistDistribuidos/internal/utils"
+	fiber "github.com/gofiber/fiber/v3"
 	uuid "github.com/google/uuid"
 	amqp "github.com/rabbitmq/amqp091-go"
-	fiber "github.com/gofiber/fiber/v3"
 )
 
 func main() {
@@ -112,6 +112,16 @@ func main() {
 						break
 					}
 				}
+				if estoque_ok {
+					saveEstoque(est)
+				} else{
+					if len(itensReservados) > 0 {
+						for _, i := range reservas[data.PedidoID] {
+							est.Produtos[i.ProdutoID].Availability += i.Quantidade
+							log.Printf("Devolvendo %d unidades do produto %s (pedido %s cancelado)", i.Quantidade, i.ProdutoID, data.PedidoID)
+						}
+					}
+				}
 				mu.Unlock()
 				if estoque_ok {
 					p_ok := e.PedidoEstoqueOKDados{
@@ -194,6 +204,7 @@ func main() {
 					est.Produtos[i.ProdutoID].Availability += i.Quantidade
 					log.Printf("Devolvendo %d unidades do produto %s (pedido %s cancelado)", i.Quantidade, i.ProdutoID, data.PedidoID)
 				}
+				saveEstoque(est)
 				delete(reservas, data.PedidoID)
 				mu.Unlock()
 			}
@@ -203,8 +214,8 @@ func main() {
 		}
 	}()
 
-	go func(){
-		app := fiber.New();
+	go func() {
+		app := fiber.New()
 		prod := est.Produtos
 		app.Get("/list/storage", func(c fiber.Ctx) error {
 			mu.RLock()
@@ -213,7 +224,7 @@ func main() {
 
 			for _, p := range prod {
 				available_items = append(available_items, fiber.Map{
-					"id": p.ID,
+					"id":           p.ID,
 					"availability": p.Availability,
 				})
 			}
