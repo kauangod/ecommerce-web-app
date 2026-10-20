@@ -35,7 +35,7 @@ Estoque:
 
 ```json
 {
-  "email": "cliente@exemplo.com",
+  "cliente": "cliente@exemplo.com",
   "itens": [
     { "produto_id": "P01", "quantidade": 2 }
   ]
@@ -97,7 +97,7 @@ Para várias categorias, o frontend faz uma chamada separada para cada uma.
 
 ### Atualizações SSE
 
-`GET /eventos?email=cliente%40exemplo.com` responde com
+`GET /notificacoes?email=cliente%40exemplo.com` responde com
 `Content-Type: text/event-stream`, mantém a
 conexão aberta e envia uma linha `id:` para permitir reconexão com
 `Last-Event-ID`. O Gateway envia apenas eventos dos pedidos associados ao

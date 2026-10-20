@@ -33,11 +33,16 @@ func NovoServico(pedidos *Pedidos, publicar func(string, any) error, avisar func
 // CriarPedido registra o pedido e agenda a publicação de pedido.criado para
 // quando a janela de cancelamento terminar.
 func (s *Servico) CriarPedido(itens []events.Item) (Pedido, error) {
-	return s.CriarPedidoPara("", itens)
+	pedido := s.pedidos.Criar(itens)
+	time.AfterFunc(s.janela, func() { s.confirmar(pedido.ID) })
+	return pedido, nil
 }
 
 // CriarPedidoPara registra um pedido vinculado ao e-mail do cliente.
 func (s *Servico) CriarPedidoPara(email string, itens []events.Item) (Pedido, error) {
+	if email == "" {
+		return Pedido{}, ErrClienteObrigatorio
+	}
 	pedido := s.pedidos.CriarPara(email, itens)
 	time.AfterFunc(s.janela, func() { s.confirmar(pedido.ID) })
 	return pedido, nil

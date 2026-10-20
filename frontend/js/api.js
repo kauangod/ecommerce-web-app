@@ -79,7 +79,7 @@ export function normalizeOrder(raw) {
   const items = first(source, ['Itens', 'itens', 'items'], []);
   return {
     id: String(first(source, ['ID', 'id', 'pedido_id', 'pedidoId'], '')),
-    email: String(first(source, ['Email', 'email'], '')),
+    email: String(first(source, ['Cliente', 'cliente', 'Email', 'email'], '')),
     itens: Array.isArray(items) ? items.map((item) => ({
       produto_id: String(first(item, ['ProdutoID', 'produto_id', 'produtoId', 'id'], '')),
       nome: String(first(item, ['Nome', 'nome', 'name'], 'Produto')),
@@ -134,7 +134,7 @@ export async function createOrder(items, email) {
   const payload = await request('/pedidos', {
     method: 'POST',
     body: JSON.stringify({
-      email,
+      cliente: email,
       itens: items.map((item) => ({ produto_id: item.id, quantidade: item.quantidade })),
     }),
   });
@@ -175,7 +175,7 @@ export async function unsubscribePromotions(email, categories = []) {
 
 export function eventStreamUrl(email) {
   if (DEMO_MODE) return null;
-  return `${API_BASE}/eventos?email=${encodeURIComponent(email)}`;
+  return `${API_BASE}/notificacoes?email=${encodeURIComponent(email)}`;
 }
 
 export function normalizeSseEvent(event) {

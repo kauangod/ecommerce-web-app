@@ -82,6 +82,13 @@ func (m *Menu) buscarProduto(codigo string) (catalogo.Produto, bool) {
 
 func (m *Menu) fazerPedido() {
 	m.mostrarProdutos()
+
+	email, ok := m.perguntar("\nE-mail do cliente: ")
+	if !ok || email == "" {
+		fmt.Fprintln(m.saida, "E-mail obrigatório. Pedido não foi criado.")
+		return
+	}
+
 	var itens []events.Item
 	for {
 		codigo, ok := m.perguntar("\nCódigo do produto (Enter para terminar): ")
@@ -110,7 +117,7 @@ func (m *Menu) fazerPedido() {
 		fmt.Fprintln(m.saida, "Pedido vazio, nada foi feito.")
 		return
 	}
-	pedido, err := m.servico.CriarPedido(itens)
+	pedido, err := m.servico.CriarPedidoPara(email, itens)
 	if err != nil {
 		fmt.Fprintf(m.saida, "Erro ao criar o pedido: %v\n", err)
 		return

@@ -55,8 +55,9 @@ func configurarHTTP(servico *Servico, pedidos *Pedidos, produtos []catalogo.Prod
 
 	app.Post("/pedidos", func(c fiber.Ctx) error {
 		var req struct {
-			Email string `json:"email"`
-			Itens []struct {
+			Cliente string `json:"cliente"`
+			Email   string `json:"email"`
+			Itens   []struct {
 				ProdutoID  string `json:"produto_id"`
 				Quantidade int    `json:"quantidade"`
 			} `json:"itens"`
@@ -64,7 +65,11 @@ func configurarHTTP(servico *Servico, pedidos *Pedidos, produtos []catalogo.Prod
 		if err := c.Bind().Body(&req); err != nil || len(req.Itens) == 0 {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"erro": "body inválido ou sem itens"})
 		}
-		email, ok := normalizarEmail(req.Email)
+		identificador := req.Cliente
+		if strings.TrimSpace(identificador) == "" {
+			identificador = req.Email
+		}
+		email, ok := normalizarEmail(identificador)
 		if !ok {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"erro": "e-mail inválido"})
 		}
@@ -126,12 +131,14 @@ func configurarHTTP(servico *Servico, pedidos *Pedidos, produtos []catalogo.Prod
 	})
 
 	eventos := sse.New(sse.Config{Handler: hub.Handler})
-	app.Get("/eventos", func(c fiber.Ctx) error {
+	handlerEventos := func(c fiber.Ctx) error {
 		if _, ok := normalizarEmail(c.Query("email")); !ok {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"erro": "e-mail inválido"})
 		}
 		return eventos(c)
-	})
+	}
+	app.Get("/notificacoes", handlerEventos)
+	app.Get("/eventos", handlerEventos)
 	app.Get("/*", static.New("./frontend"))
 	return app
 }

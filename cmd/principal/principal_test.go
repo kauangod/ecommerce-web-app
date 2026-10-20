@@ -335,7 +335,7 @@ func TestMenuFazPedido(t *testing.T) {
 	s := NovoServico(pedidos, pub.publicar, func(string) {})
 	s.janela = time.Hour
 	produtos := []catalogo.Produto{{ID: "P01", Nome: "Fone", Categoria: "A", Preco: 10}}
-	entrada := strings.NewReader("2\np01\n2\nP01\n1\n\n0\n") // P01 duas vezes: soma no mesmo item
+	entrada := strings.NewReader("2\ncliente@example.com\np01\n2\nP01\n1\n\n0\n") // P01 duas vezes: soma no mesmo item
 	var saida strings.Builder
 
 	NovoMenu(s, pedidos, produtos, entrada, &saida).Executar()

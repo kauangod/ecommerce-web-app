@@ -36,7 +36,7 @@ var etapa = map[Status]int{
 // Pedido guardado pelo Principal.
 type Pedido struct {
 	ID          string
-	Email       string
+	Email       string `json:"cliente"`
 	Itens       []events.Item
 	ValorTotal  float64
 	Status      Status
@@ -54,6 +54,7 @@ var (
 	ErrPedidoPago          = errors.New("pagamento já aprovado, o pedido está em entrega e não pode ser excluído")
 	ErrPedidoEnviado       = errors.New("pedido já foi enviado e não pode ser excluído")
 	ErrStatusAntigo        = errors.New("status igual ou anterior ao atual")
+	ErrClienteObrigatorio  = errors.New("cliente (e-mail) é obrigatório")
 )
 
 // Pedidos guarda os pedidos em memória. O menu e o consumo de eventos rodam
