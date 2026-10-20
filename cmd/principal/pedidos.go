@@ -35,6 +35,7 @@ var etapa = map[Status]int{
 // Pedido guardado pelo Principal.
 type Pedido struct {
 	ID         string
+	Cliente    string // e-mail do cliente: identifica para quem notificar (SSE)
 	Itens      []events.Item
 	ValorTotal float64
 	Status     Status
@@ -50,6 +51,7 @@ var (
 	ErrPedidoPago          = errors.New("pagamento já aprovado, o pedido está em entrega e não pode ser excluído")
 	ErrPedidoEnviado       = errors.New("pedido já foi enviado e não pode ser excluído")
 	ErrStatusAntigo        = errors.New("status igual ou anterior ao atual")
+	ErrClienteObrigatorio  = errors.New("cliente (e-mail) é obrigatório")
 )
 
 // Pedidos guarda os pedidos em memória. O menu e o consumo de eventos rodam
@@ -65,13 +67,14 @@ func NovosPedidos() *Pedidos {
 }
 
 // Criar registra um pedido novo, aguardando a confirmação.
-func (p *Pedidos) Criar(itens []events.Item) Pedido {
+func (p *Pedidos) Criar(itens []events.Item, cliente string) Pedido {
 	total := 0.0
 	for _, it := range itens {
 		total += float64(it.Quantidade) * it.PrecoUnitario
 	}
 	pedido := &Pedido{
 		ID:         uuid.NewString()[:8], // curto, para digitar no menu
+		Cliente:    cliente,
 		Itens:      append([]events.Item(nil), itens...),
 		ValorTotal: math.Round(total*100) / 100,
 		Status:     StatusAguardandoConfirmacao,

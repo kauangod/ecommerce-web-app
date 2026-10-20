@@ -30,10 +30,13 @@ func NovoServico(pedidos *Pedidos, publicar func(string, any) error, avisar func
 	return &Servico{pedidos: pedidos, publicar: publicar, avisar: avisar, janela: JanelaCancelamento}
 }
 
-// CriarPedido registra o pedido e agenda a publicação de pedido.criado para
-// quando a janela de cancelamento terminar.
-func (s *Servico) CriarPedido(itens []events.Item) (Pedido, error) {
-	pedido := s.pedidos.Criar(itens)
+// CriarPedido registra o pedido, já com o cliente dono dele, e agenda a
+// publicação de pedido.criado para quando a janela de cancelamento terminar.
+func (s *Servico) CriarPedido(itens []events.Item, cliente string) (Pedido, error) {
+	if cliente == "" {
+		return Pedido{}, ErrClienteObrigatorio
+	}
+	pedido := s.pedidos.Criar(itens, cliente)
 	time.AfterFunc(s.janela, func() { s.confirmar(pedido.ID) })
 	return pedido, nil
 }

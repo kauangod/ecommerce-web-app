@@ -205,30 +205,38 @@ func main() {
 		})
 
 		app.Post("/pedidos", func(c fiber.Ctx) error {
-			req := struct {
-				Itens []struct {
-					ProdutoID  string `json:"produto_id"`
-					Quantidade int    `json:"quantidade"`
+			req := struct{
+				Cliente string `json:"cliente"`
+				Itens []struct{
+					ProdutoID string `json:"produto_id"`
+					Quantidade int `json:"quantidade"`
 				} `json:"itens"`
 			}{}
 			err := c.Bind().Body(&req)
 			u.FailOnError(err, "Erro")
 
+			if req.Cliente == "" {
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+					"erro": "cliente (e-mail) obrigatório"})
+			}
+
 			items := []e.Item{}
-			for _, i := range req.Itens {
+			for _, i := range req.Itens{
 				prod, ok := buscarProdutoCatalogo(produtos, i.ProdutoID)
-				if !ok || i.Quantidade <= 0 {
+				if !ok || i.Quantidade <= 0{
 					return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"erro": "body inválido ou sem itens"})
 				}
 				items = append(items, e.Item{
-					ProdutoID:     i.ProdutoID,
-					Nome:          prod.Nome,
-					Quantidade:    i.Quantidade,
-					PrecoUnitario: prod.Preco,
+						ProdutoID: i.ProdutoID,
+						Nome: prod.Nome,
+						Quantidade: i.Quantidade,
+						PrecoUnitario: prod.Preco,
 				})
 			}
-			pedido, err := servico.CriarPedido(items)
-			u.FailOnError(err, "Erro ao criar o pedido")
+			pedido, err := servico.CriarPedido(items, req.Cliente)
+			if err != nil {
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"erro": err.Error()})
+			}
 
 			return c.Status(fiber.StatusCreated).JSON(pedido)
 		})
