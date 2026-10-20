@@ -19,6 +19,7 @@ type Servico struct {
 	pedidos  *Pedidos
 	publicar func(tipo string, dados any) error // assina e publica no RabbitMQ
 	avisar   func(msg string)                   // mostra no terminal as mudanças vindas dos eventos
+	notificar func(pedido Pedido)
 	janela   time.Duration                      // janela de cancelamento (os testes trocam)
 
 	// mu não deixa a confirmação e a exclusão do mesmo pedido se misturarem:
@@ -26,8 +27,8 @@ type Servico struct {
 	mu sync.Mutex
 }
 
-func NovoServico(pedidos *Pedidos, publicar func(string, any) error, avisar func(string)) *Servico {
-	return &Servico{pedidos: pedidos, publicar: publicar, avisar: avisar, janela: JanelaCancelamento}
+func NovoServico(pedidos *Pedidos, publicar func(string, any) error, avisar func(string), notificar func(Pedido)) *Servico {
+	return &Servico{pedidos: pedidos, publicar: publicar, avisar: avisar, notificar: notificar, janela: JanelaCancelamento}
 }
 
 // CriarPedido registra o pedido, já com o cliente dono dele, e agenda a
@@ -151,6 +152,7 @@ func (s *Servico) TratarEvento(env events.Envelope) error {
 
 	pedido, _ := s.pedidos.Buscar(pedidoID)
 	s.avisar(fmt.Sprintf("pedido %s: %s", pedidoID, descreverStatus(pedido)))
+	s.notificar(pedido)
 	return nil
 }
 
