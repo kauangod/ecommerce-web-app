@@ -116,8 +116,3 @@ Tipos já reconhecidos:
 - `pagamento.recusado`;
 - `pedido.enviado`.
 
-## Execução durante a integração
-
-O frontend usa caminhos relativos e deve ser aberto por HTTP, nunca diretamente
-como `file://`. Durante o desenvolvimento, configure o API Gateway para servir
-`frontend/index.html` na raiz e os arquivos estáticos nos caminhos atuais.
