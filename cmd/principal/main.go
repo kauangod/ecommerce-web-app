@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"bufio"
 
 	"github.com/bdsromulo/Trab2-SistDistribuidos/internal/catalogo"
 	e "github.com/bdsromulo/Trab2-SistDistribuidos/internal/events"
@@ -125,7 +126,14 @@ func main() {
 
 	pedidos := NovosPedidos()
 	avisar := func(msg string) { fmt.Printf("\n[evento] %s\n", msg) }
-	servico := NovoServico(pedidos, publicar, avisar)
+	notificacoes := NovasConexoes()
+	notificar_cliente := func(pedido Pedido){
+		data, err := json.Marshal(pedido)
+		u.FailOnError(err, "Erro ao serializar o objeto pedido")
+		notificacoes.Notificar(pedido.Cliente, string(data))
+	}
+
+	servico := NovoServico(pedidos, publicar, avisar, notificar_cliente)
 
 	go func() {
 		for d := range events {
@@ -157,6 +165,35 @@ func main() {
 		app.Get("/produtos", func(c fiber.Ctx) error {
 			l := listarEstoque()
 			return c.JSON(l)
+		})
+
+		app.Get("/notificacoes", func(c fiber.Ctx) error{
+			email := c.Query("email")
+			if email == "" {
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+					"erro": "e-mail obrigatório"})
+			}
+
+			ch := notificacoes.Abrir(email)
+			c.Set(fiber.HeaderContentType, "text/event-stream")
+			c.Set(fiber.HeaderCacheControl, "no-cache")
+			c.Set(fiber.HeaderConnection, "keep-alive")
+
+			c.RequestCtx().SetBodyStreamWriter(func(w *bufio.Writer){
+				defer notificacoes.Fechar(email, ch)
+				for {
+					select {
+					case msg := <-ch:
+						fmt.Fprintf(w, "data: %s\n\n", msg)
+					case <-time.After(30 * time.Second):
+						fmt.Fprintf(w, ": ping\n\n")
+					}
+					if w.Flush() != nil {
+						return
+					}
+				}
+			})
+			return nil
 		})
 
 		app.Delete("/pedidos/:id", func(c fiber.Ctx) error {
