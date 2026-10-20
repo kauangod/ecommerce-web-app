@@ -216,10 +216,9 @@ func main() {
 
 	go func() {
 		app := fiber.New()
-		prod := est.Produtos
 		app.Get("/list/storage", func(c fiber.Ctx) error {
 			mu.RLock()
-
+			prod := est.Produtos
 			available_items := []fiber.Map{}
 
 			for _, p := range prod {
