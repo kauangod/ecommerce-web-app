@@ -8,6 +8,7 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
+	"net/http"
 	"fmt"
 	"log"
 	"os"
@@ -20,6 +21,7 @@ import (
 	u "github.com/bdsromulo/Trab2-SistDistribuidos/internal/utils"
 	uuid "github.com/google/uuid"
 	amqp "github.com/rabbitmq/amqp091-go"
+	fiber "github.com/gofiber/fiber/v3"
 )
 
 func main() {
@@ -128,9 +130,37 @@ func main() {
 		}
 	}()
 
+	go func(){
+		app := fiber.New()
+		app.Get("/produtos", func(c fiber.Ctx) error {
+			l := listarEstoque()
+			return c.JSON(l)
+		})
+
+		log.Fatal(app.Listen(":3001"))
+	}()
 	NovoMenu(servico, pedidos, produtos, os.Stdin, os.Stdout).Executar()
 	fmt.Println("Até mais!")
 }
+
+var cliente_estoque = &http.Client{Timeout: 5 * time.Second}
+const url_estoque = "http://localhost:3000/list/storage"
+type ProdutoEstoque struct {
+	ID 		string `json:"id"`
+	Availability int    `json:"availability"`
+}
+
+func listarEstoque()[]ProdutoEstoque{
+	response, err := cliente_estoque.Get(url_estoque)
+	u.FailOnError(err, "Erro ao listar estoque")
+	defer response.Body.Close()
+
+	l := []ProdutoEstoque{}
+	err = json.NewDecoder(response.Body).Decode(&l)
+	u.FailOnError(err, "Erro ao decodificar resposta do estoque")
+	return l
+}
+
 
 // publicarEvento monta o envelope, assina o data com a chave do Principal e
 // publica na exchange eCommerce, do mesmo jeito que o Estoque e o Pagamento.
