@@ -15,6 +15,11 @@ type PedidoCriadoDados struct {
 	ValorTotal float64 `json:"valor_total"`
 }
 
+type InteresseCategoria struct {
+	Categoria string `json:"categoria"`
+	Email     string `json:"email"`
+}
+
 // Motivos de exclusão de um pedido.
 const (
 	MotivoUsuario           = "usuario"

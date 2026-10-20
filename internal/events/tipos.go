@@ -24,6 +24,11 @@ const (
 	PromocaoCategoriaA = PrefixoPromocao + "A"
 	PromocaoCategoriaB = PrefixoPromocao + "B"
 	PromocaoCategoriaC = PrefixoPromocao + "C"
+
+	// Interesses em categorias de produtos, publicados pelo Principal na
+	// exchange Promocoes (topic).
+	InteressePromocao = "interesse.promocao"
+	CancelarInteresse = "cancelar.interesse"
 )
 
 // TipoPromocao devolve a routing key da promoção de uma categoria (A, B ou C).
@@ -45,4 +50,6 @@ var ProdutorDoEvento = map[string]string{
 	PromocaoCategoriaA:  Promocoes,
 	PromocaoCategoriaB:  Promocoes,
 	PromocaoCategoriaC:  Promocoes,
+	InteressePromocao:   Principal,
+	CancelarInteresse:   Principal,
 }

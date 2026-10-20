@@ -8,21 +8,21 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
-	"net/http"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
-	"strings"
 
 	"github.com/bdsromulo/Trab2-SistDistribuidos/internal/catalogo"
 	e "github.com/bdsromulo/Trab2-SistDistribuidos/internal/events"
 	s "github.com/bdsromulo/Trab2-SistDistribuidos/internal/signature"
 	u "github.com/bdsromulo/Trab2-SistDistribuidos/internal/utils"
+	fiber "github.com/gofiber/fiber/v3"
 	uuid "github.com/google/uuid"
 	amqp "github.com/rabbitmq/amqp091-go"
-	fiber "github.com/gofiber/fiber/v3"
 )
 
 func main() {
@@ -47,6 +47,19 @@ func main() {
 		nil,
 	)
 	u.FailOnError(err, "Erro ao declarar a exchange")
+
+	// Interesses em categorias viajam na exchange de promoções (topic),
+	// declarada com os mesmos parâmetros do microsserviço Promoções.
+	err = ch.ExchangeDeclare(
+		"Promocoes",
+		"topic",
+		true,
+		false,
+		false,
+		false,
+		nil,
+	)
+	u.FailOnError(err, "Erro ao declarar a exchange de promoções")
 
 	_, err = ch.QueueDeclare(
 		"fila.principal",
@@ -99,7 +112,15 @@ func main() {
 	publicar := func(tipo string, dados any) error {
 		mu.Lock()
 		defer mu.Unlock()
-		return publicarEvento(ch, pk, tipo, dados)
+		return publicarEvento(ch, pk, "eCommerce", tipo, dados)
+	}
+
+	// Eventos de interesse publicam na exchange Promocoes, no mesmo canal
+	// e sob o mesmo lock do publicar acima.
+	publicarInteresse = func(routingKey string, dados any) error {
+		mu.Lock()
+		defer mu.Unlock()
+		return publicarEvento(ch, pk, "Promocoes", routingKey, dados)
 	}
 
 	pedidos := NovosPedidos()
@@ -131,34 +152,79 @@ func main() {
 		}
 	}()
 
-	go func(){
+	go func() {
 		app := fiber.New()
 		app.Get("/produtos", func(c fiber.Ctx) error {
 			l := listarEstoque()
 			return c.JSON(l)
 		})
 
+		app.Delete("/pedidos/:id", func(c fiber.Ctx) error {
+			err := servico.ExcluirPeloUsuario(c.Params("id"))
+			u.FailOnError(err, "Erro ao excluir o pedido")
+			return c.SendStatus(fiber.StatusAccepted)
+		})
+
+		app.Put("/interesses/:categoria", func(c fiber.Ctx) error {
+			req := struct {
+				Email string `json:"email"`
+			}{}
+			err := c.Bind().Body(&req)
+			u.FailOnError(err, "Erro")
+			email := req.Email
+			if email == "" {
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+					"erro": "e-mail obrigatório"})
+			}
+			interesse := e.InteresseCategoria{
+				Categoria: c.Params("categoria"),
+				Email:     email,
+			}
+			if err := Registrar(interesse); err != nil {
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+					"erro": "falha ao registrar interesse"})
+			}
+			return c.SendStatus(fiber.StatusAccepted)
+		})
+
+		app.Delete("/interesses/:categoria", func(c fiber.Ctx) error {
+			email := c.Query("email")
+			interesse := e.InteresseCategoria{
+				Categoria: c.Params("categoria"),
+				Email:     email,
+			}
+			if email == "" {
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+					"erro": "e-mail obrigatório"})
+			}
+			if err := Cancelar(interesse); err != nil {
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+					"erro": "falha ao cancelar interesse"})
+			}
+			return c.SendStatus(fiber.StatusAccepted)
+		})
+
 		app.Post("/pedidos", func(c fiber.Ctx) error {
-			req := struct{
-				Itens []struct{
-					ProdutoID string `json:"produto_id"`
-					Quantidade int `json:"quantidade"`
+			req := struct {
+				Itens []struct {
+					ProdutoID  string `json:"produto_id"`
+					Quantidade int    `json:"quantidade"`
 				} `json:"itens"`
 			}{}
 			err := c.Bind().Body(&req)
 			u.FailOnError(err, "Erro")
 
 			items := []e.Item{}
-			for _, i := range req.Itens{
+			for _, i := range req.Itens {
 				prod, ok := buscarProdutoCatalogo(produtos, i.ProdutoID)
-				if !ok || i.Quantidade <= 0{
+				if !ok || i.Quantidade <= 0 {
 					return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"erro": "body inválido ou sem itens"})
 				}
 				items = append(items, e.Item{
-						ProdutoID: i.ProdutoID,
-						Nome: prod.Nome,
-						Quantidade: i.Quantidade,
-						PrecoUnitario: prod.Preco,
+					ProdutoID:     i.ProdutoID,
+					Nome:          prod.Nome,
+					Quantidade:    i.Quantidade,
+					PrecoUnitario: prod.Preco,
 				})
 			}
 			pedido, err := servico.CriarPedido(items)
@@ -175,13 +241,15 @@ func main() {
 }
 
 var cliente_estoque = &http.Client{Timeout: 5 * time.Second}
+
 const url_estoque = "http://localhost:3000/list/storage"
+
 type ProdutoEstoque struct {
-	ID 		string `json:"id"`
+	ID           string `json:"id"`
 	Availability int    `json:"availability"`
 }
 
-func listarEstoque()[]ProdutoEstoque{
+func listarEstoque() []ProdutoEstoque {
 	response, err := cliente_estoque.Get(url_estoque)
 	u.FailOnError(err, "Erro ao listar estoque")
 	defer response.Body.Close()
@@ -201,18 +269,35 @@ func buscarProdutoCatalogo(produtos []catalogo.Produto, id string) (catalogo.Pro
 	return catalogo.Produto{}, false
 }
 
+// publicarInteresse publica eventos de interesse na exchange Promocoes.
+// É preenchida no main, que concentra o canal, a chave privada e o lock.
+var publicarInteresse func(routingKey string, dados any) error
+
+// Registrar publica na exchange Promocoes, com a routing key
+// interesse.promocao, o interesse de um e-mail numa categoria de produtos.
+func Registrar(interesse e.InteresseCategoria) error {
+	return publicarInteresse(e.InteressePromocao, interesse)
+}
+
+// Cancelar publica na exchange Promocoes, com a routing key
+// cancelar.interesse, o cancelamento do interesse de um e-mail.
+func Cancelar(interesse e.InteresseCategoria) error {
+	return publicarInteresse(e.CancelarInteresse, interesse)
+}
+
 // publicarEvento monta o envelope, assina o data com a chave do Principal e
-// publica na exchange eCommerce, do mesmo jeito que o Estoque e o Pagamento.
-func publicarEvento(ch *amqp.Channel, pk *rsa.PrivateKey, tipo string, dados any) error {
+// publica na exchange informada, do mesmo jeito que o Estoque e o Pagamento.
+// O EventType do envelope é sempre igual à routing key.
+func publicarEvento(ch *amqp.Channel, pk *rsa.PrivateKey, exchange, rk string, dados any) error {
 	dadosJSON, err := json.Marshal(dados)
 	if err != nil {
-		return fmt.Errorf("serializar dados de %s: %w", tipo, err)
+		return fmt.Errorf("serializar dados de %s: %w", rk, err)
 	}
 
 	body := e.Envelope{
 		EventID:    uuid.NewString(),
-		EventType:  tipo,
-		Producer:   e.ProdutorDoEvento[tipo],
+		EventType:  rk,
+		Producer:   e.ProdutorDoEvento[rk],
 		OccurredAt: time.Now().UTC().Truncate(time.Millisecond),
 		Data:       dadosJSON,
 		Signature:  base64.StdEncoding.EncodeToString(s.SignPayload(pk, string(dadosJSON))),
@@ -220,12 +305,12 @@ func publicarEvento(ch *amqp.Channel, pk *rsa.PrivateKey, tipo string, dados any
 
 	bodyJSON, err := json.Marshal(body)
 	if err != nil {
-		return fmt.Errorf("serializar envelope de %s: %w", tipo, err)
+		return fmt.Errorf("serializar envelope de %s: %w", rk, err)
 	}
 
 	err = ch.Publish(
-		"eCommerce",
-		tipo,
+		exchange,
+		rk,
 		false,
 		false,
 		amqp.Publishing{
@@ -236,7 +321,7 @@ func publicarEvento(ch *amqp.Channel, pk *rsa.PrivateKey, tipo string, dados any
 			Body:         bodyJSON,
 		})
 	if err != nil {
-		return fmt.Errorf("publicar %s: %w", tipo, err)
+		return fmt.Errorf("publicar %s: %w", rk, err)
 	}
 	return nil
 }
