@@ -11,7 +11,7 @@ import (
 
 // JanelaCancelamento é quanto tempo um pedido novo espera, só no Principal,
 // antes de pedido.criado ser publicado. Nesse tempo o usuário pode cancelá-lo.
-const JanelaCancelamento = 30 * time.Second
+const JanelaCancelamento = 10 * time.Second
 
 // Servico junta os pedidos e a publicação de eventos. É usado pelo menu
 // (ações do usuário) e pelo consumo da fila.principal (eventos recebidos).
