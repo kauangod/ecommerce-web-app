@@ -3,7 +3,6 @@ package main
 import (
 	"errors"
 	"math"
-	"strings"
 	"sync"
 	"time"
 
@@ -36,7 +35,7 @@ var etapa = map[Status]int{
 // Pedido guardado pelo Principal.
 type Pedido struct {
 	ID          string
-	Email       string `json:"cliente"`
+	Cliente     string // e-mail do cliente: identifica para quem notificar (SSE)
 	Itens       []events.Item
 	ValorTotal  float64
 	Status      Status
@@ -45,6 +44,25 @@ type Pedido struct {
 	CobrancaID  string
 	CheckoutURL string
 	CriadoEm    time.Time
+}
+
+// RegistrarCheckout guarda os dados recebidos do MS Pagamento.
+func (p *Pedidos) RegistrarCheckout(id, cobrancaID, checkoutURL string) (Pedido, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	pedido, ok := p.porID[id]
+	if !ok {
+		return Pedido{}, ErrPedidoNaoEncontrado
+	}
+	if pedido.Status == StatusExcluido {
+		return *pedido, ErrPedidoExcluido
+	}
+	if pedido.CobrancaID == cobrancaID && pedido.CheckoutURL == checkoutURL {
+		return *pedido, ErrStatusAntigo
+	}
+	pedido.CobrancaID = cobrancaID
+	pedido.CheckoutURL = checkoutURL
+	return *pedido, nil
 }
 
 // Erros das operações sobre pedidos.
@@ -70,19 +88,14 @@ func NovosPedidos() *Pedidos {
 }
 
 // Criar registra um pedido novo, aguardando a confirmação.
-func (p *Pedidos) Criar(itens []events.Item) Pedido {
-	return p.CriarPara("", itens)
-}
-
-// CriarPara registra um pedido associado ao identificador do cliente.
-func (p *Pedidos) CriarPara(email string, itens []events.Item) Pedido {
+func (p *Pedidos) Criar(itens []events.Item, cliente string) Pedido {
 	total := 0.0
 	for _, it := range itens {
 		total += float64(it.Quantidade) * it.PrecoUnitario
 	}
 	pedido := &Pedido{
 		ID:         uuid.NewString()[:8], // curto, para digitar no menu
-		Email:      email,
+		Cliente:    cliente,
 		Itens:      append([]events.Item(nil), itens...),
 		ValorTotal: math.Round(total*100) / 100,
 		Status:     StatusAguardandoConfirmacao,
@@ -129,36 +142,6 @@ func (p *Pedidos) Listar() []Pedido {
 		lista = append(lista, *p.porID[id])
 	}
 	return lista
-}
-
-// ListarPorEmail devolve somente os pedidos do cliente informado.
-func (p *Pedidos) ListarPorEmail(email string) []Pedido {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	lista := make([]Pedido, 0)
-	for _, id := range p.ids {
-		pedido := p.porID[id]
-		if strings.EqualFold(pedido.Email, email) {
-			lista = append(lista, *pedido)
-		}
-	}
-	return lista
-}
-
-// RegistrarCheckout guarda os dados recebidos do MS Pagamento.
-func (p *Pedidos) RegistrarCheckout(id, cobrancaID, checkoutURL string) (Pedido, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	pedido, ok := p.porID[id]
-	if !ok {
-		return Pedido{}, ErrPedidoNaoEncontrado
-	}
-	if pedido.Status == StatusExcluido {
-		return *pedido, ErrPedidoExcluido
-	}
-	pedido.CobrancaID = cobrancaID
-	pedido.CheckoutURL = checkoutURL
-	return *pedido, nil
 }
 
 // Avancar muda o status do pedido, desde que ele ande para a frente.

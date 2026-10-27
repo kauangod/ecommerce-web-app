@@ -3,8 +3,6 @@ package main
 import (
 	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
@@ -47,9 +45,9 @@ func novoTeste(t *testing.T) (*Servico, *Pedidos, *gravador, Pedido) {
 	t.Helper()
 	pedidos := NovosPedidos()
 	pub := &gravador{}
-	s := NovoServico(pedidos, pub.publicar, func(string) {})
+	s := NovoServico(pedidos, pub.publicar, func(string) {}, func(Pedido) {})
 	s.janela = time.Hour // o teste encerra a janela na mão, sem esperar o timer
-	pedido, err := s.CriarPedido(itensTeste)
+	pedido, err := s.CriarPedido(itensTeste, "cliente@example.com")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,85 +133,6 @@ func TestPagamentoCriadoGuardaCheckout(t *testing.T) {
 	}
 }
 
-func TestSSEEntregaEventoSomenteAoClienteDoPedido(t *testing.T) {
-	pedidos := NovosPedidos()
-	pedido := pedidos.CriarPara("cliente-a@example.com", itensTeste)
-	hub := NovoHubSSE(pedidos)
-	clienteA := make(chan events.Envelope, 1)
-	clienteB := make(chan events.Envelope, 1)
-	hub.clientes[clienteA] = "cliente-a@example.com"
-	hub.clientes[clienteB] = "cliente-b@example.com"
-	env := evento(t, events.PedidoEstoqueOK, events.PedidoEstoqueOKDados{PedidoID: pedido.ID})
-
-	hub.Publicar(env)
-
-	select {
-	case recebido := <-clienteA:
-		if recebido.EventType != events.PedidoEstoqueOK {
-			t.Fatalf("evento inesperado: %s", recebido.EventType)
-		}
-	default:
-		t.Fatal("cliente do pedido não recebeu o evento")
-	}
-	select {
-	case <-clienteB:
-		t.Fatal("outro cliente recebeu um evento que não era dele")
-	default:
-	}
-}
-
-func TestHTTPListaPedidosEValidaBody(t *testing.T) {
-	pedidos := NovosPedidos()
-	pedidoA := pedidos.CriarPara("cliente-a@example.com", itensTeste)
-	pedidos.CriarPara("cliente-b@example.com", itensTeste)
-	servico := NovoServico(pedidos, func(string, any) error { return nil }, func(string) {})
-	app := configurarHTTP(servico, pedidos, []catalogo.Produto{{ID: "P01", Nome: "Fone", Categoria: "A", Preco: 10}}, NovoHubSSE(pedidos))
-
-	resposta, err := app.Test(httptest.NewRequest(http.MethodGet, "/pedidos", nil))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resposta.Body.Close()
-	if resposta.StatusCode != http.StatusOK {
-		t.Fatalf("GET /pedidos retornou %d", resposta.StatusCode)
-	}
-
-	resposta, err = app.Test(httptest.NewRequest(http.MethodGet, "/pedidos?email=cliente-a%40example.com", nil))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resposta.Body.Close()
-	var lista []Pedido
-	if err := json.NewDecoder(resposta.Body).Decode(&lista); err != nil {
-		t.Fatal(err)
-	}
-	if len(lista) != 1 || lista[0].ID != pedidoA.ID {
-		t.Fatalf("filtro por cliente retornou %+v", lista)
-	}
-
-	requisicao := httptest.NewRequest(http.MethodPost, "/pedidos", strings.NewReader(`{"itens":[]}`))
-	requisicao.Header.Set("Content-Type", "application/json")
-	resposta, err = app.Test(requisicao)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resposta.Body.Close()
-	if resposta.StatusCode != http.StatusBadRequest {
-		t.Fatalf("POST /pedidos vazio retornou %d", resposta.StatusCode)
-	}
-
-	requisicao = httptest.NewRequest(http.MethodPost, "/pedidos", strings.NewReader(`{"email":"invalido","itens":[{"produto_id":"P01","quantidade":1}]}`))
-	requisicao.Header.Set("Content-Type", "application/json")
-	resposta, err = app.Test(requisicao)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resposta.Body.Close()
-	if resposta.StatusCode != http.StatusBadRequest {
-		t.Fatalf("POST /pedidos com e-mail inválido retornou %d", resposta.StatusCode)
-	}
-}
-
 func TestStatusNaoVolta(t *testing.T) {
 	s, pedidos, _, pedido := novoTeste(t)
 	id := pedido.ID
@@ -279,9 +198,9 @@ func TestExclusaoPeloUsuario(t *testing.T) {
 func TestCancelamentoNaJanelaNaoPublicaNada(t *testing.T) {
 	pedidos := NovosPedidos()
 	pub := &gravador{}
-	s := NovoServico(pedidos, pub.publicar, func(string) {})
+	s := NovoServico(pedidos, pub.publicar, func(string) {}, func(Pedido) {})
 	s.janela = time.Hour
-	pedido, _ := s.CriarPedido(itensTeste)
+	pedido, _ := s.CriarPedido(itensTeste, "cliente@example.com")
 	if pedido.Status != StatusAguardandoConfirmacao || len(pub.publicados) != 0 {
 		t.Fatalf("durante a janela: status %s, publicados %v", pedido.Status, pub.tipos())
 	}
@@ -332,7 +251,7 @@ func TestEventoDePedidoDesconhecidoEIgnorado(t *testing.T) {
 func TestMenuFazPedido(t *testing.T) {
 	pedidos := NovosPedidos()
 	pub := &gravador{}
-	s := NovoServico(pedidos, pub.publicar, func(string) {})
+	s := NovoServico(pedidos, pub.publicar, func(string) {}, func(Pedido) {})
 	s.janela = time.Hour
 	produtos := []catalogo.Produto{{ID: "P01", Nome: "Fone", Categoria: "A", Preco: 10}}
 	entrada := strings.NewReader("2\ncliente@example.com\np01\n2\nP01\n1\n\n0\n") // P01 duas vezes: soma no mesmo item

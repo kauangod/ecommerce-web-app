@@ -16,34 +16,28 @@ const JanelaCancelamento = 10 * time.Second
 // Servico junta os pedidos e a publicação de eventos. É usado pelo menu
 // (ações do usuário) e pelo consumo da fila.principal (eventos recebidos).
 type Servico struct {
-	pedidos  *Pedidos
-	publicar func(tipo string, dados any) error // assina e publica no RabbitMQ
-	avisar   func(msg string)                   // mostra no terminal as mudanças vindas dos eventos
-	janela   time.Duration                      // janela de cancelamento (os testes trocam)
+	pedidos   *Pedidos
+	publicar  func(tipo string, dados any) error // assina e publica no RabbitMQ
+	avisar    func(msg string)                   // mostra no terminal as mudanças vindas dos eventos
+	notificar func(pedido Pedido)
+	janela    time.Duration // janela de cancelamento (os testes trocam)
 
 	// mu não deixa a confirmação e a exclusão do mesmo pedido se misturarem:
 	// sem ele, pedido.excluido poderia ser publicado antes de pedido.criado.
 	mu sync.Mutex
 }
 
-func NovoServico(pedidos *Pedidos, publicar func(string, any) error, avisar func(string)) *Servico {
-	return &Servico{pedidos: pedidos, publicar: publicar, avisar: avisar, janela: JanelaCancelamento}
+func NovoServico(pedidos *Pedidos, publicar func(string, any) error, avisar func(string), notificar func(Pedido)) *Servico {
+	return &Servico{pedidos: pedidos, publicar: publicar, avisar: avisar, notificar: notificar, janela: JanelaCancelamento}
 }
 
-// CriarPedido registra o pedido e agenda a publicação de pedido.criado para
-// quando a janela de cancelamento terminar.
-func (s *Servico) CriarPedido(itens []events.Item) (Pedido, error) {
-	pedido := s.pedidos.Criar(itens)
-	time.AfterFunc(s.janela, func() { s.confirmar(pedido.ID) })
-	return pedido, nil
-}
-
-// CriarPedidoPara registra um pedido vinculado ao e-mail do cliente.
-func (s *Servico) CriarPedidoPara(email string, itens []events.Item) (Pedido, error) {
-	if email == "" {
+// CriarPedido registra o pedido, já com o cliente dono dele, e agenda a
+// publicação de pedido.criado para quando a janela de cancelamento terminar.
+func (s *Servico) CriarPedido(itens []events.Item, cliente string) (Pedido, error) {
+	if cliente == "" {
 		return Pedido{}, ErrClienteObrigatorio
 	}
-	pedido := s.pedidos.CriarPara(email, itens)
+	pedido := s.pedidos.Criar(itens, cliente)
 	time.AfterFunc(s.janela, func() { s.confirmar(pedido.ID) })
 	return pedido, nil
 }
@@ -166,6 +160,7 @@ func (s *Servico) TratarEvento(env events.Envelope) error {
 
 	pedido, _ := s.pedidos.Buscar(pedidoID)
 	s.avisar(fmt.Sprintf("pedido %s: %s", pedidoID, descreverStatus(pedido)))
+	s.notificar(pedido)
 	return nil
 }
 

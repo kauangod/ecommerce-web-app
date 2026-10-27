@@ -117,7 +117,7 @@ func (m *Menu) fazerPedido() {
 		fmt.Fprintln(m.saida, "Pedido vazio, nada foi feito.")
 		return
 	}
-	pedido, err := m.servico.CriarPedidoPara(email, itens)
+	pedido, err := m.servico.CriarPedido(itens, email)
 	if err != nil {
 		fmt.Fprintf(m.saida, "Erro ao criar o pedido: %v\n", err)
 		return

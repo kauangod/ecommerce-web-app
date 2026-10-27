@@ -188,11 +188,11 @@ export function normalizeSseEvent(event) {
   const merged = { ...payload, ...nested };
   return {
     type,
-    pedido_id: String(first(merged, ['pedido_id', 'pedidoId', 'id'], '')),
-    status: first(merged, ['status', 'estado'], null),
-    motivo: first(merged, ['motivo', 'reason'], ''),
-    detalhe: first(merged, ['detalhe', 'details'], ''),
-    checkout_url: first(merged, ['checkout_url', 'checkoutUrl', 'url_checkout', 'payment_url', 'url_pagamento'], null),
+    pedido_id: String(first(merged, ['pedido_id', 'pedidoId', 'id', 'ID'], '')),
+    status: first(merged, ['status', 'estado', 'Status'], null),
+    motivo: first(merged, ['motivo', 'reason', 'Motivo'], ''),
+    detalhe: first(merged, ['detalhe', 'details', 'Detalhe'], ''),
+    checkout_url: first(merged, ['checkout_url', 'checkoutUrl', 'url_checkout', 'payment_url', 'url_pagamento', 'CheckoutURL'], null),
     raw: merged,
   };
 }
